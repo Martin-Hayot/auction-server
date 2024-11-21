@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
@@ -10,7 +13,9 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
 	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwe"
 	"github.com/lestrrat-go/jwx/v3/jwt"
+	"golang.org/x/crypto/hkdf"
 )
 
 type Client struct {
@@ -19,48 +24,98 @@ type Client struct {
 }
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true }, // to personalize the origin check
+	CheckOrigin: func(r *http.Request) bool { return true }, // To personalize the origin check
+}
+
+func generateEncryptionKey() ([]byte, error) {
+	authSecret := os.Getenv("AUTH_SECRET")
+	if authSecret == "" {
+		return nil, fmt.Errorf("AUTH_SECRET not set")
+	}
+
+	salt := "authjs.session-token"
+	info := fmt.Sprintf("Auth.js Generated Encryption Key (%s)", salt)
+
+	// HKDF with SHA-256
+	hash := sha256.New
+	kdf := hkdf.New(hash, []byte(authSecret), []byte(salt), []byte(info))
+
+	// Change to 32 bytes (256 bits) for AES-256
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(kdf, key); err != nil {
+		return nil, fmt.Errorf("failed to generate key: %w", err)
+	}
+
+	return key, nil
+}
+
+func jweToJwt(encryptedToken string) (string, error) {
+	key, err := generateEncryptionKey()
+	if err != nil {
+		return "", fmt.Errorf("key generation failed: %w", err)
+	}
+
+	log.Debug("Attempting JWE decryption", "keyLength", len(key))
+
+	// Decrypt JWE using DIRECT key encryption and A256GCM content encryption
+	decrypted, err := jwe.Decrypt([]byte(encryptedToken),
+		jwe.WithKey(jwa.DIRECT(), key))
+	if err != nil {
+		return "", fmt.Errorf("JWE decryption failed: %w", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(decrypted, &payload); err != nil {
+		return "", fmt.Errorf("failed to parse payload: %w", err)
+	}
+
+	token := jwt.New()
+	for k, v := range payload {
+		token.Set(k, v)
+	}
+
+	signed, err := jwt.Sign(token, jwt.WithKey(jwa.HS256(), []byte(os.Getenv("AUTH_SECRET"))))
+	if err != nil {
+		return "", fmt.Errorf("JWT signing failed: %w", err)
+	}
+
+	return string(signed), nil
 }
 
 func validateTokenFromCookie(r *http.Request) (bool, error) {
-	// Extract the token from the cookie
 	cookie, err := r.Cookie("authjs.session-token")
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("no session cookie: %w", err)
 	}
 
-	tokenString := cookie.Value
-	log.Infof("Token: %s", tokenString)
-
-	authSecret := os.Getenv("AUTH_SECRET")
-	// Validate the token
-	token, err := jwt.Parse([]byte(tokenString), jwt.WithKey(jwa.HS256(), []byte(authSecret)), jwt.WithValidate(true))
-
-	log.Infof("Token: %s", token)
-
+	// Convert JWE to JWT
+	jwtString, err := jweToJwt(cookie.Value)
 	if err != nil {
+		log.Error("Failed to convert JWE to JWT", "error", err)
 		return false, err
 	}
 
-	// Check if token is expired
-	if exp, ok := token.Expiration(); ok && exp.Before(time.Now()) {
-		return false, nil
+	// Verify JWT
+	token, err := jwt.Parse([]byte(jwtString),
+		jwt.WithKey(jwa.HS256(), []byte(os.Getenv("AUTH_SECRET"))),
+		jwt.WithValidate(true))
+	if err != nil {
+		return false, fmt.Errorf("invalid JWT: %w", err)
 	}
+
+	// Check expiration
+	if exp, ok := token.Expiration(); ok && exp.Before(time.Now()) {
+		return false, fmt.Errorf("token expired")
+	}
+
 	return true, nil
 }
 
+// Auction WebSocket handler
 func auctionHandler(w http.ResponseWriter, r *http.Request) {
-
 	isValid, err := validateTokenFromCookie(r)
 	if !isValid || err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	// Extract token from query parameters
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		log.Error("Token not provided")
-		http.Error(w, "Token not provided", http.StatusUnauthorized)
 		return
 	}
 
