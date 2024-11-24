@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Martin-Hayot/auction-server/internal/database"
 	"github.com/charmbracelet/log"
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
@@ -18,9 +19,14 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
+var connectedClients = make(map[*Client]bool)
+var db database.Service
+
 type Client struct {
-	conn *websocket.Conn
-	send chan []byte
+	conn  *websocket.Conn
+	send  chan []byte
+	email string
+	id    string
 }
 
 var upgrader = websocket.Upgrader{
@@ -82,17 +88,17 @@ func jweToJwt(encryptedToken string) (string, error) {
 	return string(signed), nil
 }
 
-func validateTokenFromCookie(r *http.Request) (bool, error) {
+func validateTokenFromCookie(r *http.Request) (jwt.Token, error) {
 	cookie, err := r.Cookie("authjs.session-token")
 	if err != nil {
-		return false, fmt.Errorf("no session cookie: %w", err)
+		return nil, fmt.Errorf("no session cookie: %w", err)
 	}
 
 	// Convert JWE to JWT
 	jwtString, err := jweToJwt(cookie.Value)
 	if err != nil {
 		log.Error("Failed to convert JWE to JWT", "error", err)
-		return false, err
+		return nil, err
 	}
 
 	// Verify JWT
@@ -100,22 +106,45 @@ func validateTokenFromCookie(r *http.Request) (bool, error) {
 		jwt.WithKey(jwa.HS256(), []byte(os.Getenv("AUTH_SECRET"))),
 		jwt.WithValidate(true))
 	if err != nil {
-		return false, fmt.Errorf("invalid JWT: %w", err)
+		return nil, fmt.Errorf("invalid JWT: %w", err)
 	}
 
 	// Check expiration
 	if exp, ok := token.Expiration(); ok && exp.Before(time.Now()) {
-		return false, fmt.Errorf("token expired")
+		return nil, fmt.Errorf("token expired")
 	}
 
-	return true, nil
+	return token, nil
 }
 
 // Auction WebSocket handler
 func auctionHandler(w http.ResponseWriter, r *http.Request) {
-	isValid, err := validateTokenFromCookie(r)
-	if !isValid || err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	token, err := validateTokenFromCookie(r)
+	if err != nil || token == nil {
+		log.Error("Error validating token: ", err)
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	id, ok := token.Subject()
+	if !ok {
+		log.Error("Error retrieving subject from token")
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	var email string
+	err = token.Get("email", &email)
+	if err != nil {
+		log.Error("Error retrieving email from token claims")
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	_, err = db.GetUserByEmail(email)
+	if err != nil {
+		log.Error("Error retrieving user from database: ", err)
+		http.Error(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
@@ -124,7 +153,9 @@ func auctionHandler(w http.ResponseWriter, r *http.Request) {
 		log.Error("Error connecting to websocket: ", err)
 		return
 	}
-	client := &Client{conn: conn, send: make(chan []byte)}
+
+	client := &Client{conn: conn, send: make(chan []byte), email: email, id: id}
+	connectedClients[client] = true
 	go client.readMessages()
 	go client.writeMessages()
 }
@@ -137,14 +168,11 @@ func (c *Client) readMessages() {
 			log.Error("Error reading messages: ", err)
 			break
 		}
-		// Auction Logic
-
-		ip := c.conn.LocalAddr()
-		log.Infof("Received message from %s: %s", ip, message)
 
 		// Unmarshal message
 		type Message struct {
 			Type string `json:"type"`
+			Data string `json:"data"`
 		}
 
 		var validTypes = map[string]bool{
@@ -168,12 +196,26 @@ func (c *Client) readMessages() {
 			break
 		}
 
-		if msg.Type == "join" {
-			// Add client to list
-
-		}
-
 		if msg.Type == "bid" {
+			type BidMessage struct {
+				AuctionID string `json:"auction_id"`
+				Amount    int    `json:"amount"`
+			}
+			var bidMsg BidMessage
+			err = json.Unmarshal([]byte(msg.Data), &bidMsg)
+			if err != nil || bidMsg.Amount <= 0 {
+				log.Error("Invalid bid format or amount")
+				c.send <- []byte(`{"type": "error", "message": "Invalid bid"}`)
+				continue
+			}
+
+			// Check if bid is higher and auction is active
+			if validBid(bidMsg.AuctionID, bidMsg.Amount, c.id) {
+				updateAuctionState(bidMsg.AuctionID, bidMsg.Amount, c.id)
+				broadcastToClients(bidMsg.AuctionID, message)
+			} else {
+				c.send <- []byte(`{"type": "error", "message": "Bid too low or auction closed"}`)
+			}
 			// Check bid
 		}
 
@@ -218,8 +260,27 @@ func main() {
 	if port == "" {
 		port = "8080" // Default port if not specified
 	}
-
+	db = database.New()
+	defer db.Close()
 	http.HandleFunc("/ws/auction", auctionHandler)
 	log.Infof("Server started on port %s", port)
 	http.ListenAndServe(":"+port, nil)
+}
+
+func validBid(auctionID string, amount int, userID string) bool {
+	// Check if auction exists
+	// Check if auction is active
+
+	// Check if bid is higher than current bid
+	// Check if user has enough balance
+	return true
+}
+
+func updateAuctionState(auctionID string, amount int, userID string) {
+	// Update auction state
+	// Update user balance
+}
+
+func broadcastToClients(auctionID string, message []byte) {
+	// Send message to all clients
 }
