@@ -3,6 +3,7 @@ package websocket
 import (
 	"encoding/json"
 
+	"github.com/Martin-Hayot/auction-server/pkg/errors"
 	"github.com/charmbracelet/log"
 )
 
@@ -23,10 +24,16 @@ func ParseMessage(rawMessage []byte) (*Message, error) {
 
 // HandleMessage routes the message based on its type.
 func (h *AuctionHandler) HandleMessage(client *Client, rawMessage []byte) {
+	if !client.RateLimiter.Allow() {
+		log.Warnf("Rate limit exceeded for client %s", client.ID)
+		client.Send <- []byte(`{"type": "error", "message": "Rate limit exceeded"}`)
+		return
+	}
+
 	msg, err := ParseMessage(rawMessage)
 	if err != nil {
 		log.Infof("Invalid message from client %s: %v", client.ID, err)
-		client.Send <- []byte(`{"type": "error", "message": "Invalid message format"}`)
+		client.Send <- []byte(errors.New(errors.ErrBadMessageFormat, "Invalid message format").ToJSON())
 		return
 	}
 
@@ -39,7 +46,7 @@ func (h *AuctionHandler) HandleMessage(client *Client, rawMessage []byte) {
 		handleUpdateMessage(client, msg.Data)
 	default:
 		log.Printf("Unknown message type: %s", msg.Type)
-		client.Send <- []byte(`{"type": "error", "message": "Unknown message type"}`)
+		client.Send <- []byte(errors.New(errors.ErrUnknownMessageType, "Unknown message type").ToJSON())
 	}
 }
 
@@ -55,7 +62,7 @@ func (h *AuctionHandler) handleBidMessage(client *Client, data string) {
 	err := json.Unmarshal([]byte(data), &bidMsg)
 	if err != nil {
 		log.Infof("Invalid bid message from client %s: %v", client.ID, err)
-		client.Send <- []byte(`{"type": "error", "message": "Invalid bid message"}`)
+		client.Send <- []byte(errors.New(errors.ErrBadMessageFormat, "Invalid bid message").ToJSON())
 		return
 	}
 	// Retrieve auction and check if bid is valid
@@ -68,7 +75,7 @@ func (h *AuctionHandler) handleBidMessage(client *Client, data string) {
 	log.Debugf("Client %s placed a bid of $%.2f on auction %s", client.ID, bidMsg.Amount, bidMsg.AuctionID)
 
 	if bidMsg.Amount <= float64(auction.CurrentBid) {
-		client.Send <- []byte(`{"type": "error", "message": "Bid amount must be higher than current price"}`)
+		client.Send <- []byte(errors.New(errors.ErrBidTooLow, "Bid amount must be higher than current price").ToJSON())
 		log.Warn("Invalid bid amount")
 		return
 	}

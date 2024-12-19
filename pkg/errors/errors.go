@@ -9,12 +9,15 @@ type AppError struct {
 }
 
 const (
-	ErrInvalidToken     = 1001
-	ErrAuctionNotFound  = 1002
-	ErrBidTooLow        = 1003
-	ErrAuctionClosed    = 1004
-	ErrWebSocketUpgrade = 1005
+	ErrInvalidToken       = 1001
+	ErrAuctionNotFound    = 1002
+	ErrBidTooLow          = 1003
+	ErrAuctionClosed      = 1004
+	ErrWebSocketUpgrade   = 1005
+	ErrBadMessageFormat   = 1006
+	ErrUnknownMessageType = 1007
 
+	ErrBadRequest     = 400
 	ErrInternalServer = 500
 )
 
@@ -23,6 +26,10 @@ func (e *AppError) Error() string {
 		return fmt.Sprintf("%s: %v", e.Message, e.Err)
 	}
 	return e.Message
+}
+
+func (e *AppError) ToJSON() string {
+	return fmt.Sprintf(`{"code": %d, "message": "%s"}`, e.Code, e.Message)
 }
 
 // Wrapping utility
