@@ -1,0 +1,36 @@
+# .air.toml
+[build]
+bin = "cmd/server"  # Path to the output binary
+cmd = "make build"  # Command to run before build
+delay = 1000  # Delay in milliseconds
+exclude_dir = ["tmp", "vendor"]  
+exclude_regex = ["_test.go"]
+exclude_unchanged = false
+follow_symlink = false
+full_bin = ""
+kill_signal = "kill"
+log = "air.log"
+temp_dir = "tmp"
+wait_signal = "kill"
+
+[env]
+CLICOLOR_FORCE = "1" # Force colors for supported color libraries
+TERM = "xterm-256color"
+
+
+[log]
+  main_only = false
+  time = false
+
+[misc]
+  clean_on_exit = false
+
+[screen]
+  clear_on_rebuild = false
+  keep_scroll = true
+
+
+[watch]
+include = ["internal", "pkg", "cmd", "configs"]
+exclude = ["tmp", "vendor"]
+extensions = ["go", "yaml", "env"]

@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"strconv"
 	"time"
 
-	"github.com/Martin-Hayot/auction-server/types"
+	"github.com/Martin-Hayot/auction-server/configs"
+	"github.com/Martin-Hayot/auction-server/pkg/types"
 	"github.com/charmbracelet/log"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/joho/godotenv/autoload"
@@ -26,21 +26,16 @@ type Service interface {
 
 	// USER METHODS
 	GetUserByEmail(email string) (types.User, error)
+
+	// AUCTION METHODS
+	GetAuctionById(auctionID string) (types.Auctions, error)
 }
 
 type service struct {
 	db *sql.DB
 }
 
-var (
-	database   = os.Getenv("DB_DATABASE")
-	password   = os.Getenv("DB_PASSWORD")
-	username   = os.Getenv("DB_USERNAME")
-	port       = os.Getenv("DB_PORT")
-	host       = os.Getenv("DB_HOST")
-	schema     = os.Getenv("DB_SCHEMA")
-	dbInstance *service
-)
+var dbInstance *service
 
 func Get() service {
 	if dbInstance == nil {
@@ -50,12 +45,21 @@ func Get() service {
 	return *dbInstance
 }
 
-func New() Service {
+func New(cfg *configs.Config) Service {
 	// Reuse Connection
 	if dbInstance != nil {
 		return dbInstance
 	}
-	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
+	dbConfig := cfg.Database
+	connStr := fmt.Sprintf(
+		"postgres://%s:%s@%s:%s/%s?sslmode=%s",
+		dbConfig.User,
+		dbConfig.Password,
+		dbConfig.Host,
+		dbConfig.Port,
+		dbConfig.Name,
+		dbConfig.SSLMode,
+	)
 	db, err := sql.Open("pgx", connStr)
 
 	if err != nil {
@@ -132,7 +136,7 @@ func (s *service) Health() map[string]string {
 // If the connection is successfully closed, it returns nil.
 // If an error occurs while closing the connection, it returns the error.
 func (s *service) Close() error {
-	log.Printf("Disconnected from database: %s", database)
+	log.Info("Disconnected from database")
 	return s.db.Close()
 }
 
@@ -143,4 +147,74 @@ func (s *service) GetUserByEmail(email string) (types.User, error) {
 		return types.User{}, fmt.Errorf("error getting user by email: %w", err)
 	}
 	return user, nil
+}
+
+func (s *service) GetAuctionById(auctionID string) (types.Auctions, error) {
+	var auction types.Auctions
+	query := `
+        SELECT 
+            "id", 
+            "mileage", 
+            "state", 
+            "circulationDate", 
+            "fuelType", 
+            "power", 
+            "transmission", 
+            "carBody", 
+            "gearBox", 
+            "color", 
+            "doors", 
+            "seats", 
+            "startDate", 
+            "endDate", 
+            "startPrice", 
+            "maxPrice", 
+            "reservePrice", 
+            "currentBid", 
+            "bidIncrement", 
+            "currentBidderId", 
+            "biddersCount", 
+            "winnerId", 
+            "onlyForMerchants", 
+            "status", 
+            "carId", 
+            "createdAt", 
+            "updatedAt" 
+        FROM public."Auctions" 
+        WHERE "id" = $1
+    `
+	err := s.db.QueryRow(query, auctionID).Scan(
+		&auction.ID,
+		&auction.Mileage,
+		&auction.State,
+		&auction.CirculationDate,
+		&auction.FuelType,
+		&auction.Power,
+		&auction.Transmission,
+		&auction.CarBody,
+		&auction.GearBox,
+		&auction.Color,
+		&auction.Doors,
+		&auction.Seats,
+		&auction.StartDate,
+		&auction.EndDate,
+		&auction.StartPrice,
+		&auction.MaxPrice,
+		&auction.ReservePrice,
+		&auction.CurrentBid,
+		&auction.BidIncrement,
+		&auction.CurrentBidderID,
+		&auction.BiddersCount,
+		&auction.WinnerID,
+		&auction.OnlyForMerchants,
+		&auction.Status,
+		&auction.CarID,
+		&auction.CreatedAt,
+		&auction.UpdatedAt,
+	)
+
+	if err != nil {
+		return types.Auctions{}, fmt.Errorf("error getting auction by id: %w", err)
+	}
+	return auction, nil
 }
