@@ -32,7 +32,7 @@ func (h *AuctionHandler) HandleMessage(client *Client, rawMessage []byte) {
 
 	switch msg.Type {
 	case "join":
-		log.Info("Client joined the auction")
+		log.Debug("Client joined the auction")
 	case "bid":
 		h.handleBidMessage(client, msg.Data)
 	case "update":
@@ -65,12 +65,23 @@ func (h *AuctionHandler) handleBidMessage(client *Client, data string) {
 		return
 	}
 
-	log.Infof("Client %s placed a bid of $%.2f on auction %s", client.ID, bidMsg.Amount, bidMsg.AuctionID)
+	log.Debugf("Client %s placed a bid of $%.2f on auction %s", client.ID, bidMsg.Amount, bidMsg.AuctionID)
 
 	if bidMsg.Amount <= float64(auction.CurrentBid) {
 		client.Send <- []byte(`{"type": "error", "message": "Bid amount must be higher than current price"}`)
+		log.Warn("Invalid bid amount")
 		return
 	}
+
+	// Update auction with new bid
+
+	// Broadcast bid to all clients
+	rawMessage, err := json.Marshal(&Message{Type: "bid", Data: data})
+	if err != nil {
+		log.Error("Error marshalling bid message: ", err)
+		return
+	}
+	h.Broadcast(rawMessage)
 }
 
 func handleUpdateMessage(client *Client, data string) {

@@ -13,26 +13,29 @@ import (
 )
 
 type AuctionHandler struct {
-	db database.Service // Injected dependency
+	db               database.Service
+	connectedClients sync.Map
+	clientLock       sync.Mutex
 }
 
 func NewAuctionWebSocketHandler(db database.Service) *AuctionHandler {
-	return &AuctionHandler{db: db}
+	return &AuctionHandler{
+		db:               db,
+		connectedClients: sync.Map{},
+	}
 }
 
 var (
-	connectedClients = make(map[*Client]bool) // Track all connected clients
-	clientLock       = sync.Mutex{}           // Prevent race conditions
-	upgrader         = websocket.Upgrader{
+	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 )
 
 // AuctionHandler upgrades the HTTP request to a WebSocket connection.
-func (h *AuctionHandler) handleAuctions(w http.ResponseWriter, r *http.Request, user types.User) {
+func (h *AuctionHandler) upgradeToWebSocket(w http.ResponseWriter, r *http.Request, user types.User) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Infof("Failed to upgrade connection: %v", err)
+		log.Debugf("Failed to upgrade connection: %v", err)
 		http.Error(w, "Failed to establish connection", http.StatusInternalServerError)
 		return
 	}
@@ -46,9 +49,10 @@ func (h *AuctionHandler) handleAuctions(w http.ResponseWriter, r *http.Request, 
 		RateLimiter: rate.NewLimiter(1, 3),
 	}
 
-	clientLock.Lock()
-	connectedClients[client] = true
-	clientLock.Unlock()
+	// Add the client to the list of connected clients
+	h.clientLock.Lock()
+	h.connectedClients.Store(client, true)
+	h.clientLock.Unlock()
 
 	// Start handling the client
 	go client.ReadMessages(h.HandleMessage)
@@ -56,11 +60,11 @@ func (h *AuctionHandler) handleAuctions(w http.ResponseWriter, r *http.Request, 
 }
 
 // handleAuctionWebSocket integrates authentication and WebSocket handling.
-func (h *AuctionHandler) HandleAuctionWebSocket(w http.ResponseWriter, r *http.Request) {
+func (h *AuctionHandler) HandleAuctions(w http.ResponseWriter, r *http.Request) {
 	// Validate the token from the cookie
 	token, err := auth.ValidateTokenFromCookie(r)
 	if err != nil || token == nil {
-		log.Error("Invalid token: ", err)
+		log.Debug("Invalid token: ", err)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -68,7 +72,7 @@ func (h *AuctionHandler) HandleAuctionWebSocket(w http.ResponseWriter, r *http.R
 	var email string
 	err = token.Get("email", &email)
 	if err != nil {
-		log.Error("Error retrieving email from token claims")
+		log.Error("Error retrieving email from token claims", err)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -82,21 +86,30 @@ func (h *AuctionHandler) HandleAuctionWebSocket(w http.ResponseWriter, r *http.R
 	}
 
 	// Pass to WebSocket handler
-	h.handleAuctions(w, r, user)
+	h.upgradeToWebSocket(w, r, user)
 }
 
 // Broadcast sends a message to all connected clients.
-func Broadcast(message []byte) {
-	clientLock.Lock()
-	defer clientLock.Unlock()
+func (h *AuctionHandler) Broadcast(message []byte) {
+	h.connectedClients.Range(func(key, value any) bool {
+		client := key.(*Client)
 
-	for client := range connectedClients {
+		// Check if the client is closed
+		client.mu.Lock()
+		if client.closed {
+			client.mu.Unlock()
+			h.connectedClients.Delete(client) // Remove disconnected clients
+			return true
+		}
+		client.mu.Unlock()
+
+		// Try to send the message
 		select {
 		case client.Send <- message:
+			// Message sent successfully
 		default:
-			// Remove disconnected clients
-			delete(connectedClients, client)
-			client.Disconnect()
+			client.Disconnect(h) // Disconnect the client on failure
 		}
-	}
+		return true // Continue iteration
+	})
 }
