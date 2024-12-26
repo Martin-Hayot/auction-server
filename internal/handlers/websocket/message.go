@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/Martin-Hayot/auction-server/pkg/errors"
+	"github.com/Martin-Hayot/auction-server/pkg/types"
 	"github.com/charmbracelet/log"
 )
 
@@ -43,7 +44,7 @@ func (h *AuctionHandler) HandleMessage(client *Client, rawMessage []byte) {
 	case "bid":
 		h.handleBidMessage(client, msg.Data)
 	case "update":
-		handleUpdateMessage(client, msg.Data)
+		log.Debug("Client requested an update")
 	default:
 		log.Printf("Unknown message type: %s", msg.Type)
 		client.Send <- []byte(errors.New(errors.ErrUnknownMessageType, "Unknown message type").ToJSON())
@@ -54,8 +55,8 @@ func (h *AuctionHandler) HandleMessage(client *Client, rawMessage []byte) {
 func (h *AuctionHandler) handleBidMessage(client *Client, data string) {
 	// Process data for bid message
 	type BidMessage struct {
-		AuctionID string  `json:"auction_id"`
-		Amount    float64 `json:"amount"`
+		AuctionID string `json:"auction_id"`
+		Amount    int    `json:"amount"`
 	}
 	var bidMsg BidMessage
 
@@ -72,15 +73,40 @@ func (h *AuctionHandler) handleBidMessage(client *Client, data string) {
 		return
 	}
 
-	log.Debugf("Client %s placed a bid of $%.2f on auction %s", client.ID, bidMsg.Amount, bidMsg.AuctionID)
+	log.Debugf("Client %s placed a bid of %v on auction %s", client.ID, bidMsg.Amount, bidMsg.AuctionID)
 
-	if bidMsg.Amount <= float64(auction.CurrentBid) {
+	if bidMsg.Amount <= auction.CurrentBid {
 		client.Send <- []byte(errors.New(errors.ErrBidTooLow, "Bid amount must be higher than current price").ToJSON())
 		log.Warn("Invalid bid amount")
 		return
 	}
 
 	// Update auction with new bid
+	auction.CurrentBid = bidMsg.Amount
+	auction.CurrentBidderID = &client.ID
+	auction.BiddersCount++
+
+	auction, err = h.db.UpdateAuctionById(auction)
+	if err != nil {
+		log.Error("Error updating auction: ", err)
+		return
+	}
+
+	// create new bid in database
+	bid := types.Bid{
+		AuctionID: auction.ID,
+		UserID:    client.ID,
+		Price:     bidMsg.Amount,
+	}
+
+	bid, err = h.db.CreateBid(bid)
+	if err != nil {
+		log.Error("Error creating bid: ", err)
+		return
+	}
+
+	// add bid to auction list from client
+	client.Auctions = append(client.Auctions, bid.AuctionID)
 
 	// Broadcast bid to all clients
 	rawMessage, err := json.Marshal(&Message{Type: "bid", Data: data})
@@ -91,6 +117,33 @@ func (h *AuctionHandler) handleBidMessage(client *Client, data string) {
 	h.Broadcast(rawMessage)
 }
 
-func handleUpdateMessage(client *Client, data string) {
-	// Process update message
+func (h *AuctionHandler) handleAuctionEnd(auctionID string) {
+	// Process auction end
+	log.Debugf("Auction %s has ended", auctionID)
+
+	// designate winner
+	auction, err := h.db.GetAuctionById(auctionID)
+
+	if err != nil {
+		log.Error("Error retrieving auction: ", err)
+		return
+	}
+
+	if auction.CurrentBid < auction.ReservePrice {
+		log.Debug("Auction did not meet reserve price")
+		auction.Status = "reserve_not_met"
+	} else {
+		log.Debug("Auction met reserve price")
+		auction.Status = "sold"
+		auction.WinnerID = auction.CurrentBidderID
+
+		// Update auction in database
+		_, err = h.db.UpdateAuctionById(auction)
+		if err != nil {
+			log.Error("Error updating auction: ", err)
+			return
+		}
+	}
+
+	h.Broadcast([]byte(`{"type": "auction_end", "data": "Auction has ended"}`))
 }

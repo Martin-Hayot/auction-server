@@ -3,21 +3,57 @@ package websocket
 import (
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/Martin-Hayot/auction-server/internal/auth"
 	"github.com/Martin-Hayot/auction-server/internal/database"
 	"github.com/Martin-Hayot/auction-server/pkg/types"
 	"github.com/charmbracelet/log"
+	"github.com/go-co-op/gocron"
 	"github.com/gorilla/websocket"
 	"golang.org/x/time/rate"
 )
 
+// AuctionHandler handles WebSocket connections for the auction system.
 type AuctionHandler struct {
 	db               database.Service
-	connectedClients sync.Map
-	clientLock       sync.Mutex
+	connectedClients sync.Map   // Thread-safe map of connected clients.
+	clientLock       sync.Mutex // Mutex to synchronize access to connectedClients.
+	CurrentAuctions  []types.Auctions
 }
 
+func (h *AuctionHandler) StartPeriodicCheck() {
+	scheduler := gocron.NewScheduler(time.UTC)
+	scheduler.Every(1).Minute().Do(h.CheckAuctionsStatus)
+	scheduler.StartAsync()
+}
+
+func (h *AuctionHandler) CheckAuctionsStatus() {
+	var err error
+	h.CurrentAuctions, err = h.db.GetCurrentAuctions()
+	if err != nil {
+		log.Error("Error getting current auctions: ", err)
+		return
+	}
+
+	log.Debugf("%v active auction", len(h.CurrentAuctions))
+
+	for _, auction := range h.CurrentAuctions {
+
+		// Check if the auction has ended
+		if time.Now().After(auction.EndDate) {
+			log.Debugf("Auction %s ended", auction.ID)
+			h.handleAuctionEnd(auction.ID)
+			continue
+		}
+		time.AfterFunc(time.Until(auction.EndDate), func() {
+			log.Debugf("Auction %s ended", auction.ID)
+			h.handleAuctionEnd(auction.ID)
+		})
+	}
+}
+
+// NewAuctionWebSocketHandler creates a new instance of AuctionHandler.
 func NewAuctionWebSocketHandler(db database.Service) *AuctionHandler {
 	return &AuctionHandler{
 		db:               db,
@@ -31,7 +67,8 @@ var (
 	}
 )
 
-// AuctionHandler upgrades the HTTP request to a WebSocket connection.
+// upgradeToWebSocket upgrades the HTTP request to a WebSocket connection and initializes a new client.
+// It adds the client to the list of connected clients and starts handling the client's messages.
 func (h *AuctionHandler) upgradeToWebSocket(w http.ResponseWriter, r *http.Request, user types.User) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -42,8 +79,9 @@ func (h *AuctionHandler) upgradeToWebSocket(w http.ResponseWriter, r *http.Reque
 
 	// Initialize a new client
 	client := &Client{
-		ID:          user.ID,
-		Email:       user.Email,
+		ID:    user.ID,
+		Email: user.Email,
+		// Auctions:    ,
 		Conn:        conn,
 		Send:        make(chan []byte),
 		RateLimiter: rate.NewLimiter(1, 3),
@@ -59,7 +97,8 @@ func (h *AuctionHandler) upgradeToWebSocket(w http.ResponseWriter, r *http.Reque
 	go client.WriteMessages()
 }
 
-// handleAuctionWebSocket integrates authentication and WebSocket handling.
+// HandleAuctions handles incoming HTTP requests for the auction WebSocket.
+// It validates the user's token, retrieves the user from the database, and upgrades the connection to a WebSocket.
 func (h *AuctionHandler) HandleAuctions(w http.ResponseWriter, r *http.Request) {
 	// Validate the token from the cookie
 	token, err := auth.ValidateTokenFromCookie(r)
@@ -90,6 +129,7 @@ func (h *AuctionHandler) HandleAuctions(w http.ResponseWriter, r *http.Request) 
 }
 
 // Broadcast sends a message to all connected clients.
+// It iterates over the connected clients and attempts to send the message to each client.
 func (h *AuctionHandler) Broadcast(message []byte) {
 	h.connectedClients.Range(func(key, value any) bool {
 		client := key.(*Client)

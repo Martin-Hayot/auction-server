@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Martin-Hayot/auction-server/configs"
+	"github.com/Martin-Hayot/auction-server/pkg/errors"
 	"github.com/Martin-Hayot/auction-server/pkg/types"
 	"github.com/charmbracelet/log"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -28,7 +29,11 @@ type Service interface {
 	GetUserByEmail(email string) (types.User, error)
 
 	// AUCTION METHODS
+	GetCurrentAuctions() ([]types.Auctions, error)
 	GetAuctionById(auctionID string) (types.Auctions, error)
+	UpdateAuctionById(types.Auctions) (types.Auctions, error)
+	GetAuctionsByClientId() (types.Auctions, error)
+	CreateBid(types.Bid) (types.Bid, error)
 }
 
 type service struct {
@@ -217,4 +222,123 @@ func (s *service) GetAuctionById(auctionID string) (types.Auctions, error) {
 		return types.Auctions{}, fmt.Errorf("error getting auction by id: %w", err)
 	}
 	return auction, nil
+}
+
+func (s *service) UpdateAuctionById(auction types.Auctions) (types.Auctions, error) {
+	query := `UPDATE public."Auctions" SET "currentBid" = $1, "currentBidderId" = $2, "biddersCount" = $3 WHERE "id" = $4 RETURNING "id", "mileage", "state", "circulationDate", "fuelType", "power", "transmission", "carBody", "gearBox", "color", "doors", "seats", "startDate", "endDate", "startPrice", "maxPrice", "reservePrice", "currentBid", "bidIncrement", "currentBidderId", "biddersCount", "winnerId", "onlyForMerchants", "status", "carId", "createdAt", "updatedAt"`
+	err := s.db.QueryRow(query, auction.CurrentBid, auction.CurrentBidderID, auction.BiddersCount+1, auction.ID).Scan(
+		&auction.ID,
+		&auction.Mileage,
+		&auction.State,
+		&auction.CirculationDate,
+		&auction.FuelType,
+		&auction.Power,
+		&auction.Transmission,
+		&auction.CarBody,
+		&auction.GearBox,
+		&auction.Color,
+		&auction.Doors,
+		&auction.Seats,
+		&auction.StartDate,
+		&auction.EndDate,
+		&auction.StartPrice,
+		&auction.MaxPrice,
+		&auction.ReservePrice,
+		&auction.CurrentBid,
+		&auction.BidIncrement,
+		&auction.CurrentBidderID,
+		&auction.BiddersCount,
+		&auction.WinnerID,
+		&auction.OnlyForMerchants,
+		&auction.Status,
+		&auction.CarID,
+		&auction.CreatedAt,
+		&auction.UpdatedAt,
+	)
+
+	if err != nil {
+		return types.Auctions{}, errors.Wrap(err, "error updating auction by id")
+	}
+
+	log.Debugf("Auction %s updated with new bid: %v", auction.ID, auction.CurrentBid)
+
+	return auction, nil
+}
+
+func (s *service) GetAuctionsByClientId() (types.Auctions, error) {
+	var auction types.Auctions
+	return auction, nil
+}
+
+func (s *service) CreateBid(types.Bid) (types.Bid, error) {
+	var bid types.Bid
+
+	query := `INSERT INTO public."Bid" ("auctionId", "userId", "price") VALUES ($1, $2, $3) RETURNING "id", "auctionId", "userId", "price", "createdAt", "updatedAt"`
+	err := s.db.QueryRow(query, bid.AuctionID, bid.UserID, bid.Price).Scan(
+		&bid.ID,
+		&bid.AuctionID,
+		&bid.UserID,
+		&bid.Price,
+		&bid.CreatedAt,
+		&bid.UpdatedAt,
+	)
+
+	if err != nil {
+		return types.Bid{}, errors.Wrap(err, "error creating bid")
+	}
+
+	return bid, nil
+}
+
+func (s *service) GetCurrentAuctions() ([]types.Auctions, error) {
+	var auctions []types.Auctions
+	query := `SELECT "id", "mileage", "state", "circulationDate", "fuelType", "power", "transmission", "carBody", "gearBox", "color", "doors", "seats", "startDate", "endDate", "startPrice", "maxPrice", "reservePrice", "currentBid", "bidIncrement", "currentBidderId", "biddersCount", "winnerId", "onlyForMerchants", "status", "carId", "createdAt", "updatedAt" FROM public."Auctions" WHERE "endDate" > NOW() ORDER BY "startDate" ASC LIMIT 1`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("error getting current auctions: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var auction types.Auctions
+		err := rows.Scan(
+			&auction.ID,
+			&auction.Mileage,
+			&auction.State,
+			&auction.CirculationDate,
+			&auction.FuelType,
+			&auction.Power,
+			&auction.Transmission,
+			&auction.CarBody,
+			&auction.GearBox,
+			&auction.Color,
+			&auction.Doors,
+			&auction.Seats,
+			&auction.StartDate,
+			&auction.EndDate,
+			&auction.StartPrice,
+			&auction.MaxPrice,
+			&auction.ReservePrice,
+			&auction.CurrentBid,
+			&auction.BidIncrement,
+			&auction.CurrentBidderID,
+			&auction.BiddersCount,
+			&auction.WinnerID,
+			&auction.OnlyForMerchants,
+			&auction.Status,
+			&auction.CarID,
+			&auction.CreatedAt,
+			&auction.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning auction: %w", err)
+		}
+		auctions = append(auctions, auction)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over auctions: %w", err)
+	}
+
+	return auctions, nil
 }

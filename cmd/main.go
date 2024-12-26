@@ -42,6 +42,9 @@ func main() {
 	// Initialize WebSocket handler
 	auctionHandler := websocket.NewAuctionWebSocketHandler(db)
 
+	// Start periodic check for auctions
+	auctionHandler.StartPeriodicCheck()
+
 	// Setup routes
 	http.HandleFunc("/ws/auction", auctionHandler.HandleAuctions)
 

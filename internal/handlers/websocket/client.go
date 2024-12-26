@@ -11,6 +11,7 @@ import (
 type Client struct {
 	ID          string
 	Email       string
+	Auctions    []string
 	Conn        *websocket.Conn
 	Send        chan []byte   // Channel for outgoing messages
 	RateLimiter *rate.Limiter // Rate limiter to prevent spamming

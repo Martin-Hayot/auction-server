@@ -41,3 +41,12 @@ type Auctions struct {
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 }
+
+type Bid struct {
+	ID        string    `json:"id"`
+	AuctionID string    `json:"auctionId"`
+	UserID    string    `json:"userId"`
+	Price     int       `json:"price"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
