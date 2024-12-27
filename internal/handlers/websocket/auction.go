@@ -20,6 +20,13 @@ type AuctionHandler struct {
 	connectedClients sync.Map   // Thread-safe map of connected clients.
 	clientLock       sync.Mutex // Mutex to synchronize access to connectedClients.
 	CurrentAuctions  []types.Auctions
+	activeJobs       map[string]*AuctionJob
+	jobsMutex        sync.RWMutex
+}
+
+type AuctionJob struct {
+	timer     *time.Timer
+	auctionID string
 }
 
 func (h *AuctionHandler) StartPeriodicCheck() {
@@ -28,28 +35,70 @@ func (h *AuctionHandler) StartPeriodicCheck() {
 	scheduler.StartAsync()
 }
 
+// start a job for each auction with a timer being the remaining time before the auction ends
+// when the auction ends trigger the handleAuctionEnd function to handle the end of the auction
+// only start the job if the auction is still active and if it has not ended yet or if no winner has already been designated for it
+// also check if there are no jobs already running for this auction
 func (h *AuctionHandler) CheckAuctionsStatus() {
 	var err error
-	h.CurrentAuctions, err = h.db.GetCurrentAuctions()
+	auctions, err := h.db.GetCurrentAuctions()
 	if err != nil {
 		log.Error("Error getting current auctions: ", err)
 		return
 	}
 
-	log.Debugf("%v active auction", len(h.CurrentAuctions))
+	log.Debugf("%v active auction", len(auctions))
 
-	for _, auction := range h.CurrentAuctions {
-
-		// Check if the auction has ended
-		if time.Now().After(auction.EndDate) {
-			log.Debugf("Auction %s ended", auction.ID)
-			h.handleAuctionEnd(auction.ID)
+	for _, auction := range auctions {
+		// Check if job already exists
+		h.jobsMutex.RLock()
+		if _, exists := h.activeJobs[auction.ID]; exists {
+			h.jobsMutex.RUnlock()
 			continue
 		}
-		time.AfterFunc(time.Until(auction.EndDate), func() {
-			log.Debugf("Auction %s ended", auction.ID)
-			h.handleAuctionEnd(auction.ID)
-		})
+		h.jobsMutex.RUnlock()
+		auctionID := auction.ID // Create a local copy
+		auctionEndDateUTC := auction.EndDate.UTC()
+
+		timeUntilEnd := time.Until(auctionEndDateUTC)
+		log.Debugf("Auction %s ends in: %v", auction.ID, timeUntilEnd)
+
+		// Create new auction job
+		job := &AuctionJob{
+			auctionID: auctionID,
+		}
+
+		if timeUntilEnd > 0 {
+			job.timer = time.AfterFunc(timeUntilEnd, func() {
+				log.Debugf("Auction %s ended", auctionID)
+				h.handleAuctionEnd(auctionID)
+				h.removeJob(auctionID)
+			})
+		} else {
+			log.Debugf("Auction %s already ended", auctionID)
+
+			if auction.WinnerID == nil {
+				h.handleAuctionEnd(auctionID)
+			}
+			continue
+		}
+
+		// Store the job
+		h.jobsMutex.Lock()
+		h.activeJobs[auctionID] = job
+		h.jobsMutex.Unlock()
+	}
+	log.Debugf("Active jobs: %v", h.activeJobs)
+}
+
+func (h *AuctionHandler) removeJob(auctionID string) {
+	h.jobsMutex.Lock()
+	defer h.jobsMutex.Unlock()
+	if job, exists := h.activeJobs[auctionID]; exists {
+		if job.timer != nil {
+			job.timer.Stop()
+		}
+		delete(h.activeJobs, auctionID)
 	}
 }
 
@@ -58,6 +107,8 @@ func NewAuctionWebSocketHandler(db database.Service) *AuctionHandler {
 	return &AuctionHandler{
 		db:               db,
 		connectedClients: sync.Map{},
+		activeJobs:       make(map[string]*AuctionJob), // Initialize the map
+		jobsMutex:        sync.RWMutex{},
 	}
 }
 

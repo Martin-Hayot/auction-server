@@ -292,7 +292,7 @@ func (s *service) CreateBid(types.Bid) (types.Bid, error) {
 
 func (s *service) GetCurrentAuctions() ([]types.Auctions, error) {
 	var auctions []types.Auctions
-	query := `SELECT "id", "mileage", "state", "circulationDate", "fuelType", "power", "transmission", "carBody", "gearBox", "color", "doors", "seats", "startDate", "endDate", "startPrice", "maxPrice", "reservePrice", "currentBid", "bidIncrement", "currentBidderId", "biddersCount", "winnerId", "onlyForMerchants", "status", "carId", "createdAt", "updatedAt" FROM public."Auctions" WHERE "endDate" > NOW() ORDER BY "startDate" ASC LIMIT 1`
+	query := `SELECT "id", "mileage", "state", "circulationDate", "fuelType", "power", "transmission", "carBody", "gearBox", "color", "doors", "seats", "startDate", "endDate", "startPrice", "maxPrice", "reservePrice", "currentBid", "bidIncrement", "currentBidderId", "biddersCount", "winnerId", "onlyForMerchants", "status", "carId", "createdAt", "updatedAt" FROM public."Auctions" ORDER BY "startDate" ASC LIMIT 1`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("error getting current auctions: %w", err)
