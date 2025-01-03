@@ -10,24 +10,24 @@ CONFIG_FILE := ./configs/config.yaml
 .PHONY: dev
 dev:
 	@echo "Starting development server with Air..."
-	air -c .air.toml
+	@air -c .air.toml
 
 # Build production binary
 .PHONY: build
 build:
 	@echo "Building production binary..."
-	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BIN_NAME) ./$(BUILD_DIR)
+	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BIN_NAME) ./$(BUILD_DIR)
 	@echo "Build completed: $(BUILD_DIR)/$(BIN_NAME)"
 
 # Clean up binaries and temporary files
 .PHONY: clean
 clean:
 	@echo "Cleaning up..."
-	rm -rf $(BUILD_DIR)/$(BIN_NAME) tmp air.log
+	@rm -rf $(BUILD_DIR)/$(BIN_NAME) tmp air.log
 	@echo "Clean up completed."
 
 # Run server binary
 .PHONY: run
-run:
+run: build
 	@echo "Running server binary..."
-	$(BUILD_DIR)/$(BIN_NAME) --config=$(CONFIG_FILE)
+	@$(BUILD_DIR)/$(BIN_NAME) --config=$(CONFIG_FILE)

@@ -1,17 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Martin-Hayot/auction-server/configs"
 	"github.com/Martin-Hayot/auction-server/internal/database"
 	"github.com/Martin-Hayot/auction-server/internal/handlers/websocket"
-	"github.com/Martin-Hayot/auction-server/pkg/utils"
 	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/log"
@@ -35,12 +31,8 @@ func tick() tea.Cmd {
 
 // Define the model for the Bubble Tea application
 type model struct {
-	table     table.Model
-	viewport  viewport.Model
-	logBuffer *bytes.Buffer
-	logs      []string
-	showTable bool
-	quitting  bool
+	table    table.Model
+	quitting bool
 }
 
 // Update the Init method in the model struct
@@ -115,12 +107,7 @@ func newTable() model {
 		Bold(false)
 	t.SetStyles(s)
 
-	vp := viewport.New(100, 15)
-	vp.Style = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
-		PaddingRight(2)
-	return model{table: t, showTable: true, viewport: vp}
+	return model{table: t}
 }
 
 func updateTableRows(t table.Model) table.Model {
@@ -163,45 +150,16 @@ func updateTableRows(t table.Model) table.Model {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-
 	var (
 		cmd  tea.Cmd
 		cmds []tea.Cmd
 	)
 	switch msg := msg.(type) {
 	case tickMsg:
-		if m.showTable {
-			m.table = updateTableRows(m.table)
-		} else {
-			// refresh logs to get new logs
-			m.logs = nil
-			logs := strings.Split(m.logBuffer.String(), "\n")
-			m.logs = append(m.logs, logs...)
-			return m, tick()
-		}
+		m.table = updateTableRows(m.table)
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up":
-			if !m.showTable {
-				m.viewport.LineUp(1) // Scroll up one line in logs
-			}
-		case "down":
-			if !m.showTable {
-				m.viewport.LineDown(1) // Scroll down one line in logs
-			}
-		case "pgup":
-
-		case "pgdown":
-		case "tab":
-			m.showTable = !m.showTable
-			if !m.showTable {
-				// Load logs from buffer when switching to logs view
-				// refresh logs to get new logs
-				m.logs = nil
-				logs := strings.Split(m.logBuffer.String(), "\n")
-				m.logs = append(m.logs, logs...)
-			}
 		case "q", "ctrl+c", "esc":
 			m.quitting = true
 			return m, tea.Quit
@@ -209,14 +167,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	}
 
-	if m.showTable {
-		m.table, cmd = m.table.Update(msg)
-		cmds = append(cmds, cmd)
-		return m, tea.Batch(cmds...)
-	}
-	m.viewport, cmd = m.viewport.Update(msg)
+	m.table, cmd = m.table.Update(msg)
 	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
+
 }
 
 // Render the view based on the current state of the model
@@ -224,23 +178,9 @@ func (m model) View() string {
 	if m.quitting {
 		return "Bye!\n"
 	}
-	if m.showTable {
-		return baseStyle.Render(m.table.View()) + "\n" + helpStyle.Render("• tab: switch modes • q: exit\n")
-	} else {
-		// Create a copy of logs to avoid modifying the original
-		styledLogs := make([]string, len(m.logs))
-		copy(styledLogs, m.logs)
 
-		styledLogs = utils.ColorizeLogs(styledLogs)
+	return baseStyle.Render(m.table.View()) + "\n" + helpStyle.Render("• q: exit\n")
 
-		// only show last 15 lines of logs
-		if len(styledLogs) > 15 {
-			styledLogs = styledLogs[len(styledLogs)-15:]
-		}
-
-		m.viewport.SetContent(strings.Join(styledLogs, "\n"))
-		return m.viewport.View() + "\n" + helpStyle.Render("• tab: switch modes • q: exit\n")
-	}
 }
 
 func main() {
@@ -269,9 +209,14 @@ func main() {
 	}
 	log.SetLevel(logLevel)
 
-	// Redirect logs to buffer
-	logBuffer := new(bytes.Buffer)
-	log.SetOutput(logBuffer)
+	f, err := tea.LogToFile("debug.log", "debug")
+	if err != nil {
+		log.Fatal("fatal:", err)
+	}
+	defer f.Close()
+
+	// Redirect logs to file
+	log.SetOutput(f)
 
 	// Initialize database service
 	db = database.New(cfg)
@@ -294,9 +239,7 @@ func main() {
 		}
 	}()
 
-	// Start Bubble Tea program
 	m := newTable()
-	m.logBuffer = logBuffer
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Error running Bubble Tea program: %v", err)

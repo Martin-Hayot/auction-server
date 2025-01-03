@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/Martin-Hayot/auction-server/pkg/errors"
@@ -53,7 +54,6 @@ func (h *AuctionHandler) HandleMessage(client *Client, rawMessage []byte) {
 
 // Handlers for specific message types
 func (h *AuctionHandler) handleBidMessage(client *Client, data string) {
-	// Process data for bid message
 	type BidMessage struct {
 		AuctionID string `json:"auction_id"`
 		Amount    int    `json:"amount"`
@@ -62,51 +62,61 @@ func (h *AuctionHandler) handleBidMessage(client *Client, data string) {
 
 	err := json.Unmarshal([]byte(data), &bidMsg)
 	if err != nil {
-		log.Infof("Invalid bid message from client %s: %v", client.ID, err)
 		client.Send <- []byte(errors.New(errors.ErrBadMessageFormat, "Invalid bid message").ToJSON())
 		return
 	}
-	// Retrieve auction and check if bid is valid
-	auction, err := h.db.GetAuctionById(bidMsg.AuctionID)
+
+	ctx := context.Background()
+	tx, err := h.db.BeginTx(ctx)
 	if err != nil {
-		log.Error("Error retrieving auction: ", err)
+		log.Error("Error starting transaction: ", err)
+		client.Send <- []byte(errors.New(errors.ErrInternalServer, "Internal server error").ToJSON())
 		return
 	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
 
-	log.Debugf("Client %s placed a bid of %v on auction %s", client.ID, bidMsg.Amount, bidMsg.AuctionID)
+	auction, err := h.db.GetAuctionByIdTx(ctx, tx, bidMsg.AuctionID)
+	if err != nil {
+		log.Error("Error retrieving auction: ", err)
+		client.Send <- []byte(errors.New(errors.ErrInternalServer, "Internal server error").ToJSON())
+		return
+	}
 
 	if bidMsg.Amount <= auction.CurrentBid {
 		client.Send <- []byte(errors.New(errors.ErrBidTooLow, "Bid amount must be higher than current price").ToJSON())
-		log.Warn("Invalid bid amount")
 		return
 	}
 
-	// Update auction with new bid
+	// Update auction
 	auction.CurrentBid = bidMsg.Amount
 	auction.CurrentBidderID = &client.ID
 	auction.BiddersCount++
-
-	auction, err = h.db.UpdateAuctionById(auction)
+	auction, err = h.db.UpdateAuctionByIdTx(ctx, tx, auction)
 	if err != nil {
 		log.Error("Error updating auction: ", err)
 		return
 	}
 
-	// create new bid in database
+	// Create new bid
 	bid := types.Bid{
 		AuctionID: auction.ID,
 		UserID:    client.ID,
 		Price:     bidMsg.Amount,
 	}
-
-	bid, err = h.db.CreateBid(bid)
+	_, err = h.db.CreateBidTx(ctx, tx, bid)
 	if err != nil {
 		log.Error("Error creating bid: ", err)
 		return
 	}
-
-	// add bid to auction list from client
-	client.Auctions = append(client.Auctions, bid.AuctionID)
 
 	// Broadcast bid to all clients
 	rawMessage, err := json.Marshal(&Message{Type: "bid", Data: data})

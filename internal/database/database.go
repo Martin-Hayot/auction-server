@@ -34,6 +34,12 @@ type Service interface {
 	UpdateAuctionById(types.Auctions) (types.Auctions, error)
 	GetAuctionsByClientId() (types.Auctions, error)
 	CreateBid(types.Bid) (types.Bid, error)
+
+	// TRANSACTION METHODS
+	BeginTx(ctx context.Context) (*sql.Tx, error)
+	GetAuctionByIdTx(ctx context.Context, tx *sql.Tx, auctionID string) (types.Auctions, error)
+	UpdateAuctionByIdTx(ctx context.Context, tx *sql.Tx, auction types.Auctions) (types.Auctions, error)
+	CreateBidTx(ctx context.Context, tx *sql.Tx, bid types.Bid) (types.Bid, error)
 }
 
 type service struct {
@@ -341,4 +347,85 @@ func (s *service) GetCurrentAuctions() ([]types.Auctions, error) {
 	}
 
 	return auctions, nil
+}
+
+// BeginTx starts a new database transaction.
+func (s *service) BeginTx(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return nil, fmt.Errorf("error starting transaction: %w", err)
+	}
+	return tx, nil
+}
+
+// GetAuctionByIdTx retrieves an auction by its ID within a transaction.
+func (s *service) GetAuctionByIdTx(ctx context.Context, tx *sql.Tx, auctionID string) (types.Auctions, error) {
+	var auction types.Auctions
+	query := `
+        SELECT 
+            "id", 
+            "currentBid", 
+            "currentBidderId", 
+            "biddersCount", 
+            "status", 
+            "reservePrice" 
+        FROM public."Auctions" 
+        WHERE "id" = $1 FOR UPDATE
+    `
+	err := tx.QueryRowContext(ctx, query, auctionID).Scan(
+		&auction.ID,
+		&auction.CurrentBid,
+		&auction.CurrentBidderID,
+		&auction.BiddersCount,
+		&auction.Status,
+		&auction.ReservePrice,
+	)
+	if err != nil {
+		return types.Auctions{}, fmt.Errorf("error getting auction by id in tx: %w", err)
+	}
+	return auction, nil
+}
+
+// UpdateAuctionByIdTx updates an auction by its ID within a transaction.
+func (s *service) UpdateAuctionByIdTx(ctx context.Context, tx *sql.Tx, auction types.Auctions) (types.Auctions, error) {
+	query := `
+        UPDATE public."Auctions" 
+        SET "currentBid" = $1, "currentBidderId" = $2, "biddersCount" = $3 
+        WHERE "id" = $4 
+        RETURNING "id", "currentBid", "currentBidderId", "biddersCount", "status", "reservePrice"
+    `
+	err := tx.QueryRowContext(ctx, query, auction.CurrentBid, auction.CurrentBidderID, auction.BiddersCount, auction.ID).Scan(
+		&auction.ID,
+		&auction.CurrentBid,
+		&auction.CurrentBidderID,
+		&auction.BiddersCount,
+		&auction.Status,
+		&auction.ReservePrice,
+	)
+	if err != nil {
+		return types.Auctions{}, fmt.Errorf("error updating auction by id in tx: %w", err)
+	}
+	return auction, nil
+}
+
+// CreateBidTx creates a bid within a transaction.
+func (s *service) CreateBidTx(ctx context.Context, tx *sql.Tx, bid types.Bid) (types.Bid, error) {
+	var returnedBid types.Bid
+	query := `
+        INSERT INTO public."Bid" ("id", "auctionId", "userId", "price", "updatedAt") 
+        VALUES (gen_random_uuid(), $1, $2, $3, now()) 
+        RETURNING "id", "auctionId", "userId", "price", "createdAt", "updatedAt"
+    `
+	err := tx.QueryRowContext(ctx, query, bid.AuctionID, bid.UserID, bid.Price).Scan(
+		&returnedBid.ID,
+		&returnedBid.AuctionID,
+		&returnedBid.UserID,
+		&returnedBid.Price,
+		&returnedBid.CreatedAt,
+		&returnedBid.UpdatedAt,
+	)
+	if err != nil {
+		return types.Bid{}, fmt.Errorf("error creating bid in tx: %w", err)
+	}
+	return returnedBid, nil
 }

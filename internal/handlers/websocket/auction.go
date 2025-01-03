@@ -25,8 +25,9 @@ type AuctionHandler struct {
 }
 
 type AuctionJob struct {
-	timer     *time.Timer
-	auctionID string
+	timer             *time.Timer
+	auctionID         string
+	auctionEndDateUTC time.Time
 }
 
 func (h *AuctionHandler) StartPeriodicCheck() {
@@ -47,8 +48,6 @@ func (h *AuctionHandler) CheckAuctionsStatus() {
 		return
 	}
 
-	log.Debugf("%v active auction", len(auctions))
-
 	for _, auction := range auctions {
 		// Check if job already exists
 		h.jobsMutex.RLock()
@@ -65,7 +64,8 @@ func (h *AuctionHandler) CheckAuctionsStatus() {
 
 		// Create new auction job
 		job := &AuctionJob{
-			auctionID: auctionID,
+			auctionID:         auctionID,
+			auctionEndDateUTC: auctionEndDateUTC,
 		}
 
 		if timeUntilEnd > 0 {
@@ -74,6 +74,11 @@ func (h *AuctionHandler) CheckAuctionsStatus() {
 				h.handleAuctionEnd(auctionID)
 				h.removeJob(auctionID)
 			})
+			// Add these debug logs
+			log.Debugf("Auction %s: End date=%v, Timer will fire at=%v",
+				auctionID,
+				auctionEndDateUTC,
+				time.Now().Add(timeUntilEnd))
 		} else {
 			log.Debugf("Auction %s already ended", auctionID)
 
@@ -88,7 +93,15 @@ func (h *AuctionHandler) CheckAuctionsStatus() {
 		h.activeJobs[auctionID] = job
 		h.jobsMutex.Unlock()
 	}
-	log.Debugf("Active jobs: %v", h.activeJobs)
+
+	for _, job := range h.activeJobs {
+		if job.timer != nil {
+			log.Debugf("Active job %s: Current time=%v, Auction ends=%v",
+				job.auctionID,
+				time.Now().UTC(),
+				job.auctionEndDateUTC)
+		}
+	}
 }
 
 func (h *AuctionHandler) removeJob(auctionID string) {
