@@ -1,8 +1,4 @@
 # Caddyfile
 ws.vale-garage.com {
-    reverse_proxy app:8080 {
-        transport http {
-            versions h2c  # Enable HTTP/2 with WebSocket support
-        }
-    }
+    reverse_proxy localhost:8080   
 }
