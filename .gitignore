@@ -2,4 +2,6 @@
 .vscode
 /tmp/*
 
+/debug.log
+
 /cmd/server

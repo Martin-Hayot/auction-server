@@ -62,15 +62,7 @@ func New(cfg *configs.Config) Service {
 		return dbInstance
 	}
 	dbConfig := cfg.Database
-	connStr := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		dbConfig.User,
-		dbConfig.Password,
-		dbConfig.Host,
-		dbConfig.Port,
-		dbConfig.Name,
-		dbConfig.SSLMode,
-	)
+	connStr := dbConfig.DatabaseUrl
 	db, err := sql.Open("pgx", connStr)
 
 	if err != nil {

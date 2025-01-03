@@ -11,37 +11,32 @@ import (
 
 type Config struct {
 	Server struct {
-		Port     string
-		Env      string
-		LogLevel string
-	}
+		Port     string `mapstructure:"port"`
+		Env      string `mapstructure:"env"`
+		LogLevel string `mapstructure:"log_level"`
+	} `mapstructure:"server"`
 	Database struct {
-		Host     string
-		Port     string
-		User     string
-		Password string
-		Name     string
-		SSLMode  string
-	}
+		DatabaseUrl string `mapstructure:"database_url"`
+	} `mapstructure:"database"`
 	WebSocket struct {
-		PingInterval   string
-		MaxMessageSize int
-	}
+		PingInterval   string `mapstructure:"ping_interval"`
+		MaxMessageSize int    `mapstructure:"max_message_size"`
+	} `mapstructure:"websocket"`
 	Auth struct {
-		SecretKey string
-	}
+		SecretKey string `mapstructure:"secret_key"`
+	} `mapstructure:"auth"`
 	Features struct {
-		EnableLogging    bool
-		AllowCrossOrigin bool
-	}
+		EnableLogging    bool `mapstructure:"enable_logging"`
+		AllowCrossOrigin bool `mapstructure:"allow_cross_origin"`
+	} `mapstructure:"features"`
 }
 
 func LoadConfig() (*Config, error) {
-	// Load .env file
 	if err := godotenv.Load("./configs/.env"); err != nil {
 		log.Info("No .env file found")
 	}
 
+	// Set up viper
 	viper.SetConfigName("config")    // Name of the config file (without extension)
 	viper.SetConfigType("yaml")      // Config file type
 	viper.AddConfigPath("./configs") // Path to look for the config file

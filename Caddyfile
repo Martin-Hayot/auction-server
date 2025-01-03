@@ -1,0 +1,4 @@
+# Caddyfile
+ws.vale-garage.com {
+    reverse_proxy app:8080
+}

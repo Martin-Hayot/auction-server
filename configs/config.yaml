@@ -4,13 +4,7 @@ server:
     log_level: ${LOG_LEVEL} # Default: info (options: debug, info, warn, error, fatal, panic)
 
 database:
-    host: ${DB_HOST} # Default: localhost
-    port: ${DB_PORT} # Default: 5432
-    user: ${DB_USER} # Default: postgres
-    password: ${DB_PASSWORD} # Default: your_db_password
-    name: ${DB_NAME} # Default: vale-dev
-    schema: ${DB_SCHEMA} # Default: public
-    ssl_mode: ${DB_SSL_MODE} # Default: disable
+    database_url: ${DATABASE_URL}
 
 websocket:
     ping_interval: ${WS_PING_INTERVAL} # Default: 30s

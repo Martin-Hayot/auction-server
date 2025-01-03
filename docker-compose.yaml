@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+    app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        container_name: auction-server
+        expose:
+            - "8080"
+        env_file:
+            - ./configs/.env
+
+    caddy:
+        image: caddy:latest
+        container_name: caddy-proxy
+        restart: unless-stopped
+        ports:
+            - "80:80"
+            - "443:443"
+        volumes:
+            - ./Caddyfile:/etc/caddy/Caddyfile
+            - caddy_data:/data
+            - caddy_config:/config
+
+volumes:
+    caddy_data:
+    caddy_config:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/Martin-Hayot/auction-server/configs"
@@ -190,10 +191,6 @@ func main() {
 		log.Fatal("Error loading config: ", err)
 	}
 
-	if cfg.Server.Env == "dev" {
-		// dev specific configurations
-	}
-
 	port := cfg.Server.Port
 	if port == "" {
 		port = "8080" // Default port if not specified
@@ -209,6 +206,9 @@ func main() {
 	}
 	log.SetLevel(logLevel)
 
+	if _, err := os.Stat("debug.log"); err == nil {
+		os.Remove("debug.log")
+	}
 	f, err := tea.LogToFile("debug.log", "debug")
 	if err != nil {
 		log.Fatal("fatal:", err)
@@ -232,17 +232,24 @@ func main() {
 	http.HandleFunc("/ws/auction", auctionHandler.HandleAuctions)
 
 	// Start server in a goroutine
-	log.Infof("Server started on port %s", port)
-	go func() {
-		if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if cfg.Server.Env == "dev" {
+		go func() {
+			if err := http.ListenAndServe(":"+port, nil); err != nil {
+				log.Fatal("Failed to start server: ", err)
+			}
+		}()
+	} else {
+		if err := http.ListenAndServeTLS(":"+port, "cert.pem", "key.pem", nil); err != nil {
 			log.Fatal("Failed to start server: ", err)
 		}
-	}()
-
-	m := newTable()
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	if _, err := p.Run(); err != nil {
-		log.Fatalf("Error running Bubble Tea program: %v", err)
 	}
+	log.Infof("Server started in %s mode on port %s", cfg.Server.Env, port)
+	if cfg.Server.Env == "dev" {
 
+		m := newTable()
+		p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+		if _, err := p.Run(); err != nil {
+			log.Fatalf("Error running Bubble Tea program: %v", err)
+		}
+	}
 }
