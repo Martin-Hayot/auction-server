@@ -215,9 +215,6 @@ func main() {
 	}
 	defer f.Close()
 
-	// Redirect logs to file
-	log.SetOutput(f)
-
 	// Initialize database service
 	db = database.New(cfg)
 	defer db.Close()
@@ -231,15 +228,23 @@ func main() {
 	// Setup routes
 	http.HandleFunc("/ws/auction", auctionHandler.HandleAuctions)
 
-	// Start server in a goroutine
-	go func() {
+	if cfg.Server.Env == "prod" {
+		// Start server
+		log.Infof("Server started in %s mode on port %s", cfg.Server.Env, port)
 		if err := http.ListenAndServe(":"+port, nil); err != nil {
 			log.Fatal("Failed to start server: ", err)
 		}
-	}()
+	}
 
-	log.Infof("Server started in %s mode on port %s", cfg.Server.Env, port)
 	if cfg.Server.Env == "dev" {
+		// Redirect logs to file
+		log.SetOutput(f)
+		// Start server in a goroutine
+		go func() {
+			if err := http.ListenAndServe(":"+port, nil); err != nil {
+				log.Fatal("Failed to start server: ", err)
+			}
+		}()
 
 		m := newTable()
 		p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -247,4 +252,5 @@ func main() {
 			log.Fatalf("Error running Bubble Tea program: %v", err)
 		}
 	}
+
 }
