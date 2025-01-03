@@ -232,17 +232,12 @@ func main() {
 	http.HandleFunc("/ws/auction", auctionHandler.HandleAuctions)
 
 	// Start server in a goroutine
-	if cfg.Server.Env == "dev" {
-		go func() {
-			if err := http.ListenAndServe(":"+port, nil); err != nil {
-				log.Fatal("Failed to start server: ", err)
-			}
-		}()
-	} else {
-		if err := http.ListenAndServeTLS(":"+port, "cert.pem", "key.pem", nil); err != nil {
+	go func() {
+		if err := http.ListenAndServe(":"+port, nil); err != nil {
 			log.Fatal("Failed to start server: ", err)
 		}
-	}
+	}()
+
 	log.Infof("Server started in %s mode on port %s", cfg.Server.Env, port)
 	if cfg.Server.Env == "dev" {
 
