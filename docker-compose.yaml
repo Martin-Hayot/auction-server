@@ -8,6 +8,8 @@ services:
         container_name: auction-server
         expose:
             - "8080"
+        networks:
+            - app-network
         env_file:
             - ./configs/.env
 
@@ -22,7 +24,13 @@ services:
             - ./Caddyfile:/etc/caddy/Caddyfile
             - caddy_data:/data
             - caddy_config:/config
+        networks:
+            - app-network
 
 volumes:
     caddy_data:
     caddy_config:
+
+networks:
+    app-network:
+        driver: bridge
